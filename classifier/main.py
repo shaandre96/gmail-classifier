@@ -8,6 +8,15 @@ Accounts, auth methods, and label taxonomies are all defined in the
 accounts.yaml by scripts/sync_config.py). Nothing about a specific account is
 hardcoded here.
 
+Which messages to process: Gmail's push notification carries the mailbox's
+*new* historyId. Using it as `startHistoryId` for history.list() returns no
+changes (there are none after the new state) — you'd need the *previous*
+historyId, which means persisting state in a datastore. To avoid that, on each
+notification we instead re-scan the most recent `MAX_MESSAGES` inbox messages
+and skip any that already carry one of the profile's labels. Tune MAX_MESSAGES
+(default 5) up if you receive bursts of mail faster than notifications arrive;
+higher values mean more Gmail/Claude calls per notification.
+
 Error handling: setup-level failures (bad config, auth, Gmail/Claude API
 errors) raise RuntimeError with context so they surface clearly in Cloud
 Logging. Per-message failures are logged and skipped so one bad email does not
@@ -33,8 +42,26 @@ from google.cloud import secretmanager
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("gmail-classifier")
 
+def _int_env(name: str, default: int) -> int:
+    """Read a positive integer from the environment, falling back to default."""
+    raw = os.environ.get(name)
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        log.warning("%s=%r is not an integer; using default %d", name, raw, default)
+        return default
+    if value < 1:
+        log.warning("%s=%d must be >= 1; using default %d", name, value, default)
+        return default
+    return value
+
+
 PROJECT_ID = os.environ.get("GCP_PROJECT", "")
 MODEL = os.environ.get("CLASSIFIER_MODEL", "claude-haiku-4-5-20251001")
+# Most recent inbox messages to scan per notification (see module docstring).
+MAX_MESSAGES = _int_env("MAX_MESSAGES", 5)
 CONFIG_SECRET = "classifier-config"
 SA_KEY_SECRET = "service-account-key"
 ANTHROPIC_API_KEY_SECRET = "anthropic-api-key"
@@ -179,16 +206,13 @@ def parse_classification_response(raw: str) -> dict:
     return data
 
 
-def get_label_id(service, label_name: str) -> str | None:
-    """Get the Gmail label ID for a given label name."""
+def list_account_labels(service) -> dict:
+    """Return a {label_name: label_id} map for the account's Gmail labels."""
     try:
         labels = service.users().labels().list(userId="me").execute()
     except Exception as e:
         raise RuntimeError(f"Failed to list Gmail labels: {e}") from e
-    for label in labels.get("labels", []):
-        if label["name"] == label_name:
-            return label["id"]
-    return None
+    return {label["name"]: label["id"] for label in labels.get("labels", [])}
 
 
 def classify_email(sender: str, subject: str, snippet: str, profile_labels: list) -> dict:
@@ -216,8 +240,14 @@ def classify_email(sender: str, subject: str, snippet: str, profile_labels: list
     return parse_classification_response(raw)
 
 
-def process_one_message(service, msg_id: str, profile_labels: list, allowed: set) -> None:
-    """Fetch, classify, and label a single message. Raises on any failure."""
+def process_one_message(
+    service, msg_id: str, profile_labels: list, allowed: set, label_map: dict, our_label_ids: set
+) -> bool:
+    """Classify and label a single message. Returns True if a label was applied.
+
+    Returns False when the message is skipped (already labelled by us, unknown
+    label, or label missing in Gmail). Raises on Gmail/Claude API failures.
+    """
     try:
         msg = service.users().messages().get(
             userId="me",
@@ -227,6 +257,13 @@ def process_one_message(service, msg_id: str, profile_labels: list, allowed: set
         ).execute()
     except Exception as e:
         raise RuntimeError(f"Failed to fetch message {msg_id}: {e}") from e
+
+    # Idempotency: skip anything we've already classified. The recent-message
+    # scan re-sees the same emails across notifications, so this is the guard
+    # that stops us reclassifying (and re-billing) them.
+    if set(msg.get("labelIds", [])) & our_label_ids:
+        log.info("Skipping %s — already labelled", msg_id)
+        return False
 
     headers = {h["name"]: h["value"] for h in msg.get("payload", {}).get("headers", [])}
     sender = headers.get("From", "")
@@ -240,12 +277,12 @@ def process_one_message(service, msg_id: str, profile_labels: list, allowed: set
 
     if label_name not in allowed:
         log.warning("  Model returned unknown label '%s' — leaving %s unlabelled", label_name, msg_id)
-        return
+        return False
 
-    label_id = get_label_id(service, label_name)
+    label_id = label_map.get(label_name)
     if not label_id:
         log.warning("  Label '%s' not found in Gmail (run sync_config.py) — %s", label_name, msg_id)
-        return
+        return False
 
     try:
         service.users().messages().modify(
@@ -254,41 +291,50 @@ def process_one_message(service, msg_id: str, profile_labels: list, allowed: set
     except Exception as e:
         raise RuntimeError(f"Failed to apply label '{label_name}' to {msg_id}: {e}") from e
     log.info("  Applied %s to %s", label_name, msg_id)
+    return True
 
 
-def process_new_emails(service, history_id: str, profile_labels: list):
-    """Fetch and classify emails added since the last historyId."""
+def process_recent_emails(service, profile_labels: list, limit: int):
+    """Classify the most recent inbox messages not yet labelled by us.
+
+    See the module docstring for why we scan recent mail instead of replaying
+    Gmail history.
+    """
     allowed = {l["name"] for l in profile_labels}
+    label_map = list_account_labels(service)
+    our_label_ids = {label_map[name] for name in allowed if name in label_map}
+
     try:
-        history = service.users().history().list(
-            userId="me",
-            startHistoryId=history_id,
-            historyTypes=["messageAdded"],
-            labelId="INBOX",
+        listing = service.users().messages().list(
+            userId="me", labelIds=["INBOX"], maxResults=limit,
         ).execute()
     except Exception as e:
-        raise RuntimeError(f"Failed to fetch Gmail history from id {history_id}: {e}") from e
+        raise RuntimeError(f"Failed to list recent inbox messages: {e}") from e
 
-    changes = history.get("history", [])
-    if not changes:
-        log.info("No new inbox messages to process.")
+    messages = listing.get("messages", [])
+    if not messages:
+        log.info("No inbox messages to process.")
         return
 
-    processed = errors = 0
-    for record in changes:
-        for msg_added in record.get("messagesAdded", []):
-            msg_id = msg_added.get("message", {}).get("id")
-            if not msg_id:
-                continue
-            try:
-                process_one_message(service, msg_id, profile_labels, allowed)
-                processed += 1
-            except Exception as e:
-                # Keep going — one bad message must not abort the batch.
-                errors += 1
-                log.exception("Skipping message %s after error: %s", msg_id, e)
+    labelled = skipped = errors = 0
+    for m in messages:
+        msg_id = m.get("id")
+        if not msg_id:
+            continue
+        try:
+            if process_one_message(service, msg_id, profile_labels, allowed, label_map, our_label_ids):
+                labelled += 1
+            else:
+                skipped += 1
+        except Exception as e:
+            # Keep going — one bad message must not abort the batch.
+            errors += 1
+            log.exception("Skipping message %s after error: %s", msg_id, e)
 
-    log.info("Batch complete: %d processed, %d errors", processed, errors)
+    log.info(
+        "Scan complete: %d labelled, %d skipped, %d errors (scanned %d, limit %d)",
+        labelled, skipped, errors, len(messages), limit,
+    )
 
 
 @functions_framework.cloud_event
@@ -301,10 +347,11 @@ def classify(cloud_event):
         raise RuntimeError(f"Malformed Pub/Sub event payload: {e}") from e
 
     email_address = notification.get("emailAddress", "")
-    history_id = str(notification.get("historyId", ""))
-    if not email_address or not history_id:
-        raise RuntimeError(f"Notification missing emailAddress/historyId: {notification!r}")
-    log.info("Notification for %s (historyId %s)", email_address, history_id)
+    if not email_address:
+        raise RuntimeError(f"Notification missing emailAddress: {notification!r}")
+    # historyId is logged for debugging only — we scan recent mail rather than
+    # replay history (see module docstring and process_recent_emails).
+    log.info("Notification for %s (historyId %s)", email_address, notification.get("historyId"))
 
     config = load_config()
     account = find_account(config, email_address)
@@ -318,4 +365,4 @@ def classify(cloud_event):
         raise RuntimeError(f"Account '{email_address}' references unknown profile '{profile}'")
 
     service = build_gmail_service(account)
-    process_new_emails(service, history_id, config["profiles"][profile])
+    process_recent_emails(service, config["profiles"][profile], MAX_MESSAGES)

@@ -17,6 +17,7 @@ set +a
 : "${SERVICE_ACCOUNT:?SERVICE_ACCOUNT not set in .env}"
 : "${PUBSUB_TOPIC:?PUBSUB_TOPIC not set in .env}"
 : "${CLASSIFIER_MODEL:=claude-haiku-4-5-20251001}"
+: "${MAX_MESSAGES:=5}"
 
 deploy_classifier() {
   echo "Deploying classifier..."
@@ -28,7 +29,7 @@ deploy_classifier() {
     --entry-point=classify \
     --trigger-topic="$PUBSUB_TOPIC" \
     --service-account="$SERVICE_ACCOUNT" \
-    --set-env-vars="GCP_PROJECT=$GCP_PROJECT,CLASSIFIER_MODEL=$CLASSIFIER_MODEL" \
+    --set-env-vars="GCP_PROJECT=$GCP_PROJECT,CLASSIFIER_MODEL=$CLASSIFIER_MODEL,MAX_MESSAGES=$MAX_MESSAGES" \
     --memory=256MB \
     --timeout=60s \
     --min-instances=0 \

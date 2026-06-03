@@ -29,9 +29,9 @@ It supports two kinds of account out of the box:
                                         │ Cloud Function: classify  │
                                         │  1. load config (secret)  │
                                         │  2. route by email addr   │
-                                        │  3. fetch new message(s)  │
-                                        │  4. Claude → label        │
-                                        │  5. apply Gmail label     │
+                                        │  3. scan recent inbox mail │
+                                        │  4. Claude → label         │
+                                        │  5. apply Gmail label      │
                                         └──────────────────────────┘
 
   Cloud Scheduler ──(every 5 days, HTTP)──▶ Cloud Function: renew
@@ -43,6 +43,16 @@ Gmail push subscriptions expire after 7 days, so a second Cloud Function
 (`gmail-watch-renewer`) is invoked by Cloud Scheduler every 5 days to call
 `users.watch()` again for every configured account.
 
+### Which messages get classified
+
+Gmail's push notification only carries the mailbox's *new* `historyId`, not the
+changes themselves — replaying history requires storing the *previous* historyId
+in a datastore. To keep the system stateless, on each notification the classifier
+instead scans the most recent **`MAX_MESSAGES`** inbox messages (default 5) and
+skips any that already carry one of the profile's labels. If you receive mail in
+bursts that arrive faster than notifications, raise `MAX_MESSAGES` in `.env`;
+higher values mean more Gmail/Claude calls per notification.
+
 ## Configuration
 
 Three files drive everything. The `*.example` files are committed templates; copy
@@ -52,7 +62,7 @@ each to its real (gitignored) name and fill it in.
 | --- | --- | --- |
 | `taxonomies.yaml` ← `taxonomies.example.yaml` | local only | label **profiles** — named sets of labels + descriptions the model classifies into |
 | `accounts.yaml` ← `accounts.example.yaml` | local only | which email addresses to manage, their auth method, and which profile each uses |
-| `.env` ← `.env.example` | local only | deploy-time vars: project, region, service account, topic, model |
+| `.env` ← `.env.example` | local only | deploy-time vars: project, region, service account, topic, model, scan window |
 
 `taxonomies.yaml` — a profile is a reusable label set; label `name` must match the
 Gmail label (it gets created for you), and `description` is what the model reads:
