@@ -1,0 +1,33 @@
+# Label taxonomies — the template forkers customise.
+#
+# A "profile" is a named set of labels the classifier can choose from for an
+# account. Each label has a `name` (must match — or will be created as — the
+# Gmail label) and a `description` the model reads to decide what belongs there.
+#
+# Copy this file to `taxonomies.yaml` (gitignored) and edit it to taste, then run
+# `python scripts/sync_config.py` to push it and create any missing Gmail labels.
+#
+# Use "Parent/Child" names to get nested labels in Gmail.
+
+profiles:
+  personal:
+    - name: Important
+      description: "anything time-sensitive or that needs your action — bills, appointments, deadlines, security alerts"
+    - name: Finance
+      description: "bank and card statements, tax/government, invoices, receipts, payslips"
+    - name: Personal
+      description: "real personal mail from people you actually know"
+    - name: Updates
+      description: "order confirmations, shipping, account notifications, automated service messages"
+    - name: Newsletters
+      description: "subscriptions, digests, mailing lists you opted into"
+    - name: Noise
+      description: "promotions, marketing, cold outreach, anything you'd never miss"
+
+  business:
+    - name: Business/Lead
+      description: "potential client enquiries, new business, people asking about your services"
+    - name: Business/Client
+      description: "emails from known or active clients"
+    - name: Business/Admin
+      description: "billing receipts, platform notifications (e.g. hosting, source control), subscriptions"

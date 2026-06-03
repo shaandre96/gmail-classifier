@@ -1,0 +1,25 @@
+# Account map — which Gmail addresses to manage, how to authenticate them, and
+# which label profile (from taxonomies.yaml) each one uses.
+#
+# THIS FILE IS A TEMPLATE. Copy it to `accounts.yaml` (gitignored — it holds your
+# real email addresses) and fill in your details, then run:
+#   python scripts/sync_config.py
+#
+# auth methods:
+#   oauth     — a personal Gmail account. You authorise it once in a browser via
+#               scripts/setup_auth.py; the OAuth token is stored in Secret Manager
+#               under `token_secret`.
+#   delegated — a Google Workspace account accessed via service-account
+#               domain-wide delegation (no browser). Requires the service account's
+#               key in the `service-account-key` secret and the relevant Workspace
+#               admin configuration (see README).
+
+accounts:
+  - email: you@gmail.com
+    auth: oauth
+    profile: personal
+    token_secret: gmail-token-you      # Secret Manager secret holding this account's OAuth token
+
+  - email: you@yourcompany.com
+    auth: delegated
+    profile: business

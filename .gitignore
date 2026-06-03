@@ -1,0 +1,15 @@
+# Secrets & credentials — never commit
+credentials.json
+token_*.json
+*.json
+.env
+
+# Local config (your real accounts/labels live here; templates are *.example.yaml)
+accounts.yaml
+taxonomies.yaml
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
