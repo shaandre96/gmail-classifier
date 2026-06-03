@@ -44,14 +44,19 @@ def create_missing_labels(config: dict) -> None:
     for account in config["accounts"]:
         wanted = [label["name"] for label in config["profiles"][account["profile"]]]
         print(f"\n{account['email']} — ensuring labels for profile '{account['profile']}'")
+        # Delegated auth is lazy: build_gmail_service() succeeds and the token is
+        # only fetched on the first API call, so the auth failure surfaces at
+        # labels().list() below — keep it inside the try so one misconfigured
+        # account is skipped instead of aborting the whole sync.
         try:
             service = build_gmail_service(account)
+            existing = {
+                l["name"]
+                for l in service.users().labels().list(userId="me").execute().get("labels", [])
+            }
         except Exception as e:
-            print(f"  ⚠️  could not authenticate ({e}); run setup_auth.py first. Skipping.")
+            print(f"  ⚠️  skipping {account['email']} (auth/list failed): {e}")
             continue
-        existing = {
-            l["name"] for l in service.users().labels().list(userId="me").execute().get("labels", [])
-        }
         for name in wanted:
             if name in existing:
                 print(f"  ✓ {name}")
