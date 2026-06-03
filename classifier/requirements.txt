@@ -2,6 +2,7 @@ google-auth==2.29.0
 google-auth-httplib2==0.2.0
 google-api-python-client==2.126.0
 google-cloud-secret-manager==2.20.0
-anthropic==0.28.0
+anthropic==0.105.2
+httpx==0.28.1          # pinned: anthropic<0.39 passed proxies= to httpx, removed in httpx 0.28
 functions-framework==3.5.0
 PyYAML==6.0.1
