@@ -148,14 +148,19 @@ gcloud pubsub topics add-iam-policy-binding <topic> \
 
 ### Workspace accounts — domain-wide delegation
 
-For each `delegated` account, authorise the service account's client ID in the
-Google Workspace Admin console (Security → API controls → Domain-wide delegation)
-for these scopes:
+For each Workspace **domain**, authorise that domain's service-account client ID in
+its Google Workspace Admin console (Security → API controls → Domain-wide
+delegation) for these scopes:
 
 - `https://www.googleapis.com/auth/gmail.modify`
 - `https://www.googleapis.com/auth/gmail.labels`
 
-Store the service-account key JSON in the `service-account-key` secret.
+Domain-wide delegation is configured **per domain**, so one service account covers
+all delegated accounts in a single Workspace domain. Store its key JSON in the
+`service-account-key` secret (the default). If you manage delegated accounts across
+**multiple** domains, create a separate service account + key per domain, store each
+in its own secret, and point the account at it with `key_secret:` in
+`accounts.yaml`.
 
 ### Deployer (you)
 
@@ -171,7 +176,8 @@ runtime SA), `roles/secretmanager.admin`, `roles/pubsub.editor`, and
 | `anthropic-api-key` | Anthropic API key for Claude | you, once |
 | `classifier-config` | merged `taxonomies.yaml` + `accounts.yaml` | `sync_config.py` |
 | `<token_secret>` (per oauth account) | that account's OAuth token | `setup_auth.py` |
-| `service-account-key` | SA key JSON for delegated accounts | you, once |
+| `service-account-key` | default SA key JSON for delegated accounts | you, once |
+| `<key_secret>` (per extra Workspace domain) | that domain's SA key JSON | you, once |
 
 ## Setup
 
@@ -253,3 +259,7 @@ itself to stay within Gmail API quota.
 `taxonomies.yaml`, and any other `*.json` are git-ignored and must **never** be
 committed — they hold your credentials and email addresses. Only the `*.example`
 templates are tracked. Secrets live in Secret Manager and on your machine for setup.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

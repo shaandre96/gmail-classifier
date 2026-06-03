@@ -10,9 +10,14 @@
 #               scripts/setup_auth.py; the OAuth token is stored in Secret Manager
 #               under `token_secret`.
 #   delegated — a Google Workspace account accessed via service-account
-#               domain-wide delegation (no browser). Requires the service account's
-#               key in the `service-account-key` secret and the relevant Workspace
-#               admin configuration (see README).
+#               domain-wide delegation (no browser). Requires a service-account
+#               key in Secret Manager and the relevant Workspace admin
+#               configuration (see README).
+#
+# Delegated accounts default to the `service-account-key` secret. Domain-wide
+# delegation is configured per Workspace domain, so if you manage accounts across
+# MULTIPLE domains, give each domain its own service account + key and point the
+# account at it with `key_secret`. Accounts in the same domain can share one key.
 
 accounts:
   - email: you@gmail.com
@@ -20,6 +25,13 @@ accounts:
     profile: personal
     token_secret: gmail-token-you      # Secret Manager secret holding this account's OAuth token
 
+  # Workspace account using the default `service-account-key` secret.
   - email: you@yourcompany.com
     auth: delegated
     profile: business
+
+  # Workspace account in a DIFFERENT domain, with its own service-account key.
+  - email: you@anotherdomain.com
+    auth: delegated
+    profile: business
+    key_secret: sa-key-anotherdomain   # Secret Manager secret for this domain's SA key

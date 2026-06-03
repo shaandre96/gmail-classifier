@@ -55,9 +55,12 @@ def create_missing_labels(config: dict) -> None:
         for name in wanted:
             if name in existing:
                 print(f"  ✓ {name}")
-            else:
+                continue
+            try:
                 service.users().labels().create(userId="me", body={"name": name}).execute()
                 print(f"  + created {name}")
+            except Exception as e:
+                print(f"  ✗ could not create '{name}': {e}")
 
 
 def main() -> None:
@@ -73,7 +76,10 @@ def main() -> None:
     print(f"Config valid: {len(config['accounts'])} account(s), {len(config['profiles'])} profile(s)")
 
     print(f"\nUploading merged config to secret '{CONFIG_SECRET}'...")
-    upload_secret(CONFIG_SECRET, yaml.safe_dump(config, sort_keys=False))
+    try:
+        upload_secret(CONFIG_SECRET, yaml.safe_dump(config, sort_keys=False))
+    except Exception as e:
+        sys.exit(f"Failed to upload config to '{CONFIG_SECRET}': {e}")
 
     if not args.skip_labels:
         create_missing_labels(config)

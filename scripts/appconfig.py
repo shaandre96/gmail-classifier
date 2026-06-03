@@ -57,11 +57,24 @@ def topic_name() -> str:
     return f"projects/{PROJECT_ID}/topics/{PUBSUB_TOPIC}"
 
 
+def _load_yaml(path: Path, key: str):
+    if not path.exists():
+        raise SystemExit(f"Missing {path.name} — copy {path.stem}.example.yaml to {path.name}")
+    try:
+        data = yaml.safe_load(path.read_text())
+    except yaml.YAMLError as e:
+        raise SystemExit(f"{path.name} is not valid YAML: {e}")
+    if not isinstance(data, dict) or key not in data:
+        raise SystemExit(f"{path.name} must contain a top-level '{key}' key")
+    return data[key]
+
+
 def load_config() -> dict:
     """Return {'profiles': {...}, 'accounts': [...]} from the local YAML files."""
-    profiles = yaml.safe_load(TAXONOMIES_FILE.read_text())["profiles"]
-    accounts = yaml.safe_load(ACCOUNTS_FILE.read_text())["accounts"]
-    return {"profiles": profiles, "accounts": accounts}
+    return {
+        "profiles": _load_yaml(TAXONOMIES_FILE, "profiles"),
+        "accounts": _load_yaml(ACCOUNTS_FILE, "accounts"),
+    }
 
 
 def find_account(accounts: list, email: str) -> dict:
@@ -80,9 +93,14 @@ def token_path(account: dict) -> Path:
 
 
 def get_secret(secret_id: str) -> str:
-    client = secretmanager.SecretManagerServiceClient()
-    name = f"projects/{PROJECT_ID}/secrets/{secret_id}/versions/latest"
-    return client.access_secret_version(request={"name": name}).payload.data.decode("utf-8")
+    if not PROJECT_ID:
+        raise SystemExit("GCP_PROJECT not set — copy .env.example to .env and fill it in")
+    try:
+        client = secretmanager.SecretManagerServiceClient()
+        name = f"projects/{PROJECT_ID}/secrets/{secret_id}/versions/latest"
+        return client.access_secret_version(request={"name": name}).payload.data.decode("utf-8")
+    except Exception as e:
+        raise SystemExit(f"Failed to read secret '{secret_id}' from project '{PROJECT_ID}': {e}")
 
 
 def upload_secret(secret_id: str, value: str) -> None:
@@ -125,8 +143,10 @@ def build_gmail_service(account: dict):
             local.write_text(creds.to_json())
         return build("gmail", "v1", credentials=creds)
     if auth == "delegated":
+        # Per-account key secret (one per Workspace domain); defaults to the shared one.
+        key_secret = account.get("key_secret", SA_KEY_SECRET)
         creds = service_account.Credentials.from_service_account_info(
-            json.loads(get_secret(SA_KEY_SECRET)), scopes=SCOPES, subject=account["email"]
+            json.loads(get_secret(key_secret)), scopes=SCOPES, subject=account["email"]
         )
         return build("gmail", "v1", credentials=creds)
     raise ValueError(f"Unknown auth method '{auth}' for {account['email']}")

@@ -70,12 +70,19 @@ def main() -> None:
         if not accounts:
             sys.exit(f"No account '{only}' in accounts.yaml")
 
+    failures = []
     for account in accounts:
-        print(f"\n=== {account['email']} ({account['auth']}) ===")
-        if account["auth"] == "oauth":
-            authorise_oauth_account(account)
-        register_watch(account)
+        print(f"\n=== {account['email']} ({account.get('auth')}) ===")
+        try:
+            if account["auth"] == "oauth":
+                authorise_oauth_account(account)
+            register_watch(account)
+        except Exception as e:
+            failures.append(account["email"])
+            print(f"  ✗ Failed: {e}")
 
+    if failures:
+        sys.exit(f"\n⚠️  Setup failed for: {', '.join(failures)}")
     print("\n✅ Setup complete. Now run: python scripts/sync_config.py")
 
 
